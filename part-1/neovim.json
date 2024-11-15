@@ -1,0 +1,1 @@
+{"cmake":{"build_dir":"{cwd}\\build\\{os}-{build_type}","target":"part1","cmd":"cmake","build_type":"Debug","args":{"configure":["-D","CMAKE_EXPORT_COMPILE_COMMANDS=1","-G","Visual Studio 17 2022"]},"dap_name":"lldb"},"cargo":{"dap_name":"lldb"}}

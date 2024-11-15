@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch 8086 decoder",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}\\build\\windows-debug\\Debug\\part1.exe",
+            "args": [
+                "${input:file}"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}\\build\\windows-debug\\Debug\\",
+            "environment": [],
+            "console": "integratedTerminal"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "file",
+            "description": "Input filename",
+            "default": "./listings/listing_0037_single_register_mov",
+            "type": "pickString",
+            "options": ["./listings/listing_0037_single_register_mov", "./listings/listing_0038_many_register_mov"]
+        }
+    ]
+}
