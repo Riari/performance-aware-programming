@@ -1,151 +1,236 @@
 #include <direct.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define BUFFER_SIZE 32
-#define BITS 16
+// Instruction mnemonics
+#define MNEMONIC_MOV "MOV"
+#define MNEMONIC_ADD "ADD"
+#define MNEMONIC_SUB "SUB"
+#define MNEMONIC_CMP "CMP"
+#define MNEMONIC_JMP "JMP"
+#define MNEMONIC_CALL "CALL"
+#define MNEMONIC_RET "RET"
+#define MNEMONIC_PUSH "PUSH"
+#define MNEMONIC_POP "POP"
+#define MNEMONIC_AND "AND"
+#define MNEMONIC_OR "OR"
+#define MNEMONIC_XOR "XOR"
+#define MNEMONIC_NOT "NOT"
+#define MNEMONIC_SHL "SHL"
+#define MNEMONIC_SHR "SHR"
 
-#define MASK_FIELD_DESTINATION 0x02
-#define MASK_FIELD_WIDTH 0x01
-#define MASK_FIELD_MODE 0xC0
-#define MASK_FIELD_REGISTER 0x38
-#define MASK_FIELD_REGISTER_MEMORY 0x07
+// Operand types
+#define OPERAND_REG "REG"   // Register
+#define OPERAND_IMM "IMM"   // Immediate value
+#define OPERAND_MEM "MEM"   // Memory reference
+#define OPERAND_ADDR "ADDR" // Address (for jumps, calls)
+#define OPERAND_SREG "SREG" // Segment register
+#define OPERAND_NONE "NONE" // No operand
 
-#define MODE_MEMORY_NO_DISPLACEMENT 0x00
-#define MODE_MEMORY_8BIT_DISPLACEMENT 0x01
-#define MODE_MEMORY_16BIT_DISPLACEMENT 0x02
-#define MODE_MEMORY_REGISTER 0x03
+typedef struct InstructionNode {
+  struct InstructionNode *children[2];
 
-const char MNEMONIC_MOV[] = "MOV";
+  bool isTerminal;
 
-typedef enum {
-    NONE,
-    REG,
-    REG_MEM,
-    MEM,
-    IMM8,
-    IMM16,
-    REL8,
-    REL16,
-    SEGMENT_REG
-} OperandType;
+  struct {
+    char *mnemonic;
+    int operandCount;
+    char *operandTypes[2];
+    int bytes;
+  } instruction;
+} InstructionNode;
 
-typedef struct {
-    uint8_t opcode;        // Base opcode byte (10001000 for MOV)
-    uint8_t mask;          // Mask to match first 6 bits only (11111100)
-    const char *mnemonic;  // Instruction mnemonic
-    OperandType operand1;  // First operand type
-    OperandType operand2;  // Second operand type
-} Instruction;
+typedef struct DecodedInstruction {
+  char mnemonic[16];
+  char operands[2][32];
+  int bytes;
+} DecodedInstruction;
 
-const Instruction INSTRUCTION_TABLE[] = {
-    {0x88, 0xFC, MNEMONIC_MOV, REG_MEM, REG}, // MOV r/m8, reg8 (d=0, w=0)
-    {0x89, 0xFC, MNEMONIC_MOV, REG_MEM, REG}, // MOV r/m16, reg16 (d=0, w=1)
-    {0x8A, 0xFC, MNEMONIC_MOV, REG, REG_MEM}, // MOV reg8, r/m8 (d=1, w=0)
-    {0x8B, 0xFC, MNEMONIC_MOV, REG, REG_MEM}, // MOV reg16, r/m16 (d=1, w=1)
-};
+InstructionNode *create_node() {
+  InstructionNode *node = (InstructionNode *)malloc(sizeof(InstructionNode));
+  node->children[0] = NULL;
+  node->children[1] = NULL;
+  node->isTerminal = false;
 
-const char* REGISTER_TABLE_8BIT[] = {"AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH"};
-const char* REGISTER_TABLE_16BIT[] = {"AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI"};
+  return node;
+}
 
-const Instruction* lookup_instruction(uint8_t byte) {
-    for (int i = 0; i < sizeof(INSTRUCTION_TABLE) / sizeof(INSTRUCTION_TABLE[i]); ++i) {
-        Instruction instruction = INSTRUCTION_TABLE[i];
-        if ((byte & instruction.mask) == (instruction.opcode & instruction.mask)) {
-            return &INSTRUCTION_TABLE[i];
-        }
+DecodedInstruction *decode_instruction(InstructionNode *root,
+                                       const uint8_t *bytes, int maxLength) {
+  InstructionNode *current = root;
+  InstructionNode *lastMatch = NULL;
+
+  int bitsConsumed = 0;
+  int byteIndex = 0;
+
+  while (byteIndex < maxLength && current) {
+    uint8_t currentByte = bytes[byteIndex];
+
+    for (int bit = 7; bit >= 0; bit--) {
+      int bitValue = (currentByte >> bit) & 1;
+
+      if (!current->children[bitValue])
+        break; // Dead end
+
+      current = current->children[bitValue];
+      bitsConsumed++;
+
+      if (current->isTerminal)
+        lastMatch = current;
     }
 
-    return NULL;
+    byteIndex++;
+
+    if (byteIndex * 8 < bitsConsumed)
+      break;
+  }
+
+  if (!lastMatch)
+    return NULL; // No match
+
+  DecodedInstruction *result =
+      (DecodedInstruction *)malloc(sizeof(DecodedInstruction));
+  strcpy(result->mnemonic, lastMatch->instruction.mnemonic);
+
+  for (int i = 0; i < lastMatch->instruction.operandCount; i++) {
+    strcpy(result->operands[i], lastMatch->instruction.operandTypes[i]);
+  }
+
+  result->bytes = lastMatch->instruction.bytes;
+
+  return result;
 }
 
-int byte_contains_mask(unsigned char byte, uint8_t mask) {
-  return (byte & mask) == mask;
+const char *REGISTER_TABLE_8BIT[8] = {"AL", "CL", "DL", "BL",
+                                      "AH", "CH", "DH", "BH"};
+const char *REGISTER_TABLE_16BIT[8] = {"AX", "CX", "DX", "BX",
+                                       "SP", "BP", "SI", "DI"};
+
+char *decode_register(uint8_t regCode, bool is16bit) {
+  if (is16bit)
+    return strdup(REGISTER_TABLE_16BIT[regCode]);
+  else
+    return strdup(REGISTER_TABLE_8BIT[regCode]);
 }
 
-const char* get_register_name(uint8_t reg, uint8_t isWord) {
-  return (isWord == 0)
-    ? REGISTER_TABLE_8BIT[reg & 0x07]
-    : REGISTER_TABLE_16BIT[reg & 0x07];
-}
+void insert_instruction(InstructionNode *root, const char *bitPattern,
+                        const char *mnemonic, int operandCount,
+                        const char *operand1Type, const char *operand2Type,
+                        int bytes) {
+  InstructionNode *current = root;
 
-int append_formatted(char *buffer, size_t size, const char *format, ...) {
-    size_t len = strlen(buffer);
+  while (*bitPattern) {
+    if (*bitPattern == '0' || *bitPattern == '1') {
+      int index = *bitPattern - '0';
+      if (!current->children[index])
+        current->children[index] = create_node();
+      current = current->children[index];
+    } else if (*bitPattern == 'x') {
+      // 'x' means "don't care" - we need both parts
+      if (!current->children[0])
+        current->children[0] = create_node();
+      if (!current->children[1])
+        current->children[1] = create_node();
 
-    if (len >= size - 1) {
-        return -1;
+      // TODO: Handle this recursively
+      InstructionNode *branch = current->children[1];
+      char newPattern[256];
+      strcpy(newPattern, bitPattern + 1);
+      insert_instruction(branch, newPattern, mnemonic, operandCount,
+                         operand1Type, operand2Type, bytes);
+
+      current = current->children[0];
     }
 
-    va_list args;
-    va_start(args, format);
+    bitPattern++;
+  }
 
-    int written = vsnprintf(buffer + len, size - len, format, args);
+  current->isTerminal = true;
+  current->instruction.mnemonic = strdup(mnemonic);
+  current->instruction.operandCount = operandCount;
+  current->instruction.operandTypes[0] =
+      operand1Type ? strdup(operand1Type) : NULL;
+  current->instruction.operandTypes[1] =
+      operand2Type ? strdup(operand2Type) : NULL;
+  current->instruction.bytes = bytes;
+}
 
-    va_end(args);
+void build_instruction_set(InstructionNode *root) {
+  // MOV register to register
+  insert_instruction(root, "1000100wrrxxxmmm", MNEMONIC_MOV, 2, OPERAND_REG, OPERAND_REG, 2);
 
-    return (written >= 0 && (size_t)written < size - len) ? written : -1;
+  // MOV immediate to register
+  insert_instruction(root, "1011wrrrxxxxxxxx", MNEMONIC_MOV, 2, OPERAND_REG, OPERAND_IMM, 2);
+
+  // MOV memory to register
+  insert_instruction(root, "1000101wmmxxxrrr", MNEMONIC_MOV, 2, OPERAND_REG, OPERAND_MEM, 2);
+
+  // MOV register to memory
+  insert_instruction(root, "1000100wmmxxxrrr", MNEMONIC_MOV, 2, OPERAND_MEM, OPERAND_REG, 2);
+
+  // TODO: Add more instructions
+}
+
+void disassemble_binary(InstructionNode *root, const uint8_t *binary,
+                        size_t size) {
+  size_t offset = 0;
+
+  while (offset < size) {
+    DecodedInstruction *instr =
+        decode_instruction(root, &binary[offset], size - offset);
+
+    if (!instr) {
+      printf("%04X: DB %02X\n", offset, binary[offset]);
+      offset++;
+      continue;
+    }
+
+    printf("%04X: %s ", offset, instr->mnemonic);
+
+    // Print operands
+    for (int i = 0; i < 2 && instr->operands[i][0] != '\0'; i++) {
+      printf("%s%s", instr->operands[i], i == 0 ? ", " : "");
+    }
+    printf("\n");
+
+    // Move to the next instruction
+    offset += instr->bytes;
+    free(instr);
+  }
 }
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
-    perror("Expected filename as argument.");
+    printf("Usage: %s <binary_file>\n", argv[0]);
     return 1;
   }
 
-  char* cwdBuffer;
-  if ((cwdBuffer = _getcwd(NULL, 0)) == NULL) {
-    perror("_getcwd error");
-  } else {
-    printf("%s \nLength:%zu\n", cwdBuffer, strlen(cwdBuffer));
-    free(cwdBuffer);
-  }
-
-  printf("Opening file %s\n", argv[1]);
-
-  FILE *file;
-  fopen_s(&file, argv[1], "r");
-  if (file == NULL) {
-    perror("Could not open file.");
-    fclose(file);
+  FILE *file = fopen(argv[1], "rb");
+  if (!file) {
+    perror("Error opening file");
     return 1;
   }
 
-  unsigned char fileBuffer[BUFFER_SIZE];
-  size_t bytesRead = fread(fileBuffer, sizeof(unsigned char), BUFFER_SIZE, file);
+  fseek(file, 0, SEEK_END);
+  size_t size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  uint8_t *binary = (uint8_t *)malloc(size);
+  fread(binary, 1, size, file);
   fclose(file);
 
-  // TODO: "bits 16" tells the assembler the code is 16-bit. Maybe try to determine this automatically from the binary?
-  //       I'm not sure if it's a standard directive or specific to NASM.
-  char output[1024] = "bits 16\n\n";
+  InstructionNode *root = create_node();
+  build_instruction_set(root);
 
-  size_t i = 0;
-  while (i < bytesRead) {
-    unsigned char byte1 = fileBuffer[i++];
+  disassemble_binary(root, binary, size);
 
-    const Instruction* instruction = lookup_instruction(byte1);
+  free(binary);
 
-    append_formatted(output, sizeof(output), "%s ", instruction->mnemonic);
-
-    if (instruction->mnemonic == MNEMONIC_MOV) {
-      int isWord = byte_contains_mask(byte1, MASK_FIELD_WIDTH);
-      int isDestination = byte_contains_mask(byte1, MASK_FIELD_DESTINATION);
-
-      unsigned char byte2 = fileBuffer[i++];
-
-      unsigned char reg = (byte2 & MASK_FIELD_REGISTER) >> 3;
-      unsigned char rm = (byte2 & MASK_FIELD_REGISTER_MEMORY);
-
-      const char* regName = get_register_name(reg, isWord);
-      const char* rmName = get_register_name(rm, isWord);
-
-      append_formatted(output, sizeof(output), "%s,%s\n", isDestination ? regName : rmName, isDestination ? rmName : regName);
-    }
-  }
-
-  printf("%s", output);
+  // TODO: Free the trie
 
   return 0;
 }

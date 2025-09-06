@@ -21,7 +21,7 @@
             "description": "Input filename",
             "default": "./listings/listing_0037_single_register_mov",
             "type": "pickString",
-            "options": ["./listings/listing_0037_single_register_mov", "./listings/listing_0038_many_register_mov"]
+            "options": ["./listings/listing_0037_single_register_mov", "./listings/listing_0038_many_register_mov", "./listings/listing_0039_more_movs", "./listings/listing_0040_challenge_movs"]
         }
     ]
 }
